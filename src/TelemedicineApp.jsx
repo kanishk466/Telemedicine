@@ -145,12 +145,19 @@ export default function TelemedicineApp() {
 
       // Local track handling (if user toggles mic/cam, we will enable/disable tracks)
       room.on("disconnected", (roomObj, error) => {
-        // cleanup on disconnect
-        cleanupRoom();
-        if (error) {
-          console.error("Room disconnected with error", error);
-        }
-      });
+  // ensure we cleanup local tracks and references
+  (async () => {
+    try {
+      await cleanupRoom();
+      if (error) {
+        console.error("Room disconnected with error", error);
+      }
+    } catch (e) {
+      console.error("Error during disconnect cleanup", e);
+    }
+  })();
+});
+
 
       setStep("consultation");
     } catch (err) {
@@ -204,112 +211,232 @@ export default function TelemedicineApp() {
     } catch (err) {}
   };
 
+
   const handleGenerateToken = async () => {
-    if (!apiEndpoint) {
-      setError("Please enter API endpoint");
-      return;
-    }
-    if (!appointmentId || !userId) {
-      setError("Appointment ID and User ID required");
-      return;
+  if (!apiEndpoint) {
+    setError("Please enter API endpoint");
+    return;
+  }
+  if (!appointmentId || !userId) {
+    setError("Appointment ID and User ID required");
+    return;
+  }
+
+  setLoading(true);
+  setError("");
+
+  try {
+    const res = await fetch(apiEndpoint, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ appointmentId, userId, role }),
+    });
+
+    // try to parse JSON safely
+    const data = await (async () => {
+      try { return await res.json(); } catch (e) { return { error: await res.text() }; }
+    })();
+
+    if (!res.ok) {
+      throw new Error(data?.error || data?.message || "Failed to generate token");
     }
 
-    setLoading(true);
-    setError("");
+    const payload = data.result ? data.result : data;
+    if (!payload?.token || !payload?.roomName) {
+      throw new Error("Invalid token response from API");
+    }
 
-    try {
-      // call token endpoint — expects payload: { appointmentId, userId, role }
-      const res = await fetch(apiEndpoint, {
+    setToken(payload.token);
+    setRoomName(payload.roomName);
+    setStep("waiting");
+  } catch (err) {
+    setError(err.message || "Failed to generate token");
+    console.error("handleGenerateToken error:", err);
+  } finally {
+    setLoading(false);
+  }
+};
+
+  // const handleGenerateToken = async () => {
+  //   if (!apiEndpoint) {
+  //     setError("Please enter API endpoint");
+  //     return;
+  //   }
+  //   if (!appointmentId || !userId) {
+  //     setError("Appointment ID and User ID required");
+  //     return;
+  //   }
+
+  //   setLoading(true);
+  //   setError("");
+
+  //   try {
+  //     // call token endpoint — expects payload: { appointmentId, userId, role }
+  //     const res = await fetch(apiEndpoint, {
+  //       method: "POST",
+  //       headers: { "Content-Type": "application/json" },
+  //       body: JSON.stringify({ appointmentId, userId, role }),
+  //     });
+
+  //     if (!res.ok) {
+  //       const errText = await res.text();
+  //       throw new Error(errText || "Failed to generate token");
+  //     }
+
+  //     const data = await res.json();
+  //     // support both shapes: { token, roomName } or { result: { token, roomName } }
+  //     const payload = data.result ? data.result : data;
+  //     if (!payload?.token || !payload?.roomName) {
+  //       throw new Error("Invalid token response from API");
+  //     }
+
+  //     setToken(payload.token);
+  //     setRoomName(payload.roomName);
+  //     setStep("waiting");
+  //   } catch (err) {
+  //     setError(err.message || "Failed to generate token");
+  //   } finally {
+  //     setLoading(false);
+  //   }
+  // };
+
+  
+
+  // const handleJoinConsultation = async () => {
+  //   setError("");
+  //   setLoading(true);
+
+  //   try {
+  //     // If doctor, optionally call startCallEndpoint to mark IN_CONSULTATION (or rely on webhook)
+  //     if (role === "DOCTOR") {
+  //       if (!startCallEndpoint) {
+  //         setError("Please enter start call API endpoint");
+  //         setLoading(false);
+  //         return;
+  //       }
+
+  //       const res = await fetch(startCallEndpoint, {
+  //         method: "POST",
+  //         headers: { "Content-Type": "application/json" },
+  //         body: JSON.stringify({ appointmentId, doctorUserId: userId }),
+  //       });
+
+  //       if (!res.ok) {
+  //         const text = await res.text();
+  //         throw new Error(text || "Failed to start consultation (doctor)");
+  //       }
+  //     }
+
+  //     // Patient or doctor now proceed to connect: step will trigger connectToRoom via useEffect
+  //     setStep("consultation");
+  //   } catch (err) {
+  //     setError(err.message || "Failed to start/join consultation");
+  //     console.error(err);
+  //   } finally {
+  //     setLoading(false);
+  //   }
+  // };
+
+
+const handleJoinConsultation = async () => {
+  setError("");
+  setLoading(true);
+
+  try {
+    // If doctor, call start endpoint to change backend state (time checks happen there)
+    if (role === "DOCTOR") {
+      if (!startCallEndpoint) {
+        throw new Error("Please enter start call API endpoint");
+      }
+
+      const res = await fetch(startCallEndpoint, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ appointmentId, userId, role }),
+        body: JSON.stringify({ appointmentId, doctorUserId: userId }),
       });
 
+      const data = await (async () => {
+        try { return await res.json(); } catch (e) { return { error: await res.text() }; }
+      })();
+
       if (!res.ok) {
-        const errText = await res.text();
-        throw new Error(errText || "Failed to generate token");
+        throw new Error(data?.error || data?.message || "Failed to start consultation (doctor)");
       }
-
-      const data = await res.json();
-      // support both shapes: { token, roomName } or { result: { token, roomName } }
-      const payload = data.result ? data.result : data;
-      if (!payload?.token || !payload?.roomName) {
-        throw new Error("Invalid token response from API");
-      }
-
-      setToken(payload.token);
-      setRoomName(payload.roomName);
-      setStep("waiting");
-    } catch (err) {
-      setError(err.message || "Failed to generate token");
-    } finally {
-      setLoading(false);
     }
-  };
 
-  const handleJoinConsultation = async () => {
-    setError("");
-    setLoading(true);
+    // For patients, backend already validated when issuing token; proceed to connect
+    setStep("consultation");
+  } catch (err) {
+    setError(err.message || "Failed to start/join consultation");
+    console.error("handleJoinConsultation error:", err);
+  } finally {
+    setLoading(false);
+  }
+};
 
-    try {
-      // If doctor, optionally call startCallEndpoint to mark IN_CONSULTATION (or rely on webhook)
-      if (role === "DOCTOR") {
-        if (!startCallEndpoint) {
-          setError("Please enter start call API endpoint");
-          setLoading(false);
-          return;
-        }
 
-        const res = await fetch(startCallEndpoint, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ appointmentId, doctorUserId: userId }),
-        });
 
-        if (!res.ok) {
-          const text = await res.text();
-          throw new Error(text || "Failed to start consultation (doctor)");
-        }
-      }
-
-      // Patient or doctor now proceed to connect: step will trigger connectToRoom via useEffect
-      setStep("consultation");
-    } catch (err) {
-      setError(err.message || "Failed to start/join consultation");
-      console.error(err);
-    } finally {
-      setLoading(false);
-    }
-  };
-
+  
   // Toggle video: enable/disable local video track
+  // const toggleVideo = () => {
+  //   try {
+  //     const vt = localTracksRef.current?.find((t) => t.kind === "video");
+  //     if (!vt) return;
+  //     vt.isEnabled = !vt.isEnabled;
+  //     // Twilio track has .enable() / .disable() in some versions, but safe approach:
+  //     if (typeof vt.enable === "function") vt.enable(!vt.isEnabled);
+  //     else vt.mediaStreamTrack.enabled = !vt.mediaStreamTrack.enabled;
+  //     setVideoEnabled(vt.mediaStreamTrack?.enabled ?? true);
+  //   } catch (err) {
+  //     console.warn("toggleVideo err", err);
+  //   }
+  // };
+
+
   const toggleVideo = () => {
-    try {
-      const vt = localTracksRef.current?.find((t) => t.kind === "video");
-      if (!vt) return;
-      vt.isEnabled = !vt.isEnabled;
-      // Twilio track has .enable() / .disable() in some versions, but safe approach:
-      if (typeof vt.enable === "function") vt.enable(!vt.isEnabled);
-      else vt.mediaStreamTrack.enabled = !vt.mediaStreamTrack.enabled;
-      setVideoEnabled(vt.mediaStreamTrack?.enabled ?? true);
-    } catch (err) {
-      console.warn("toggleVideo err", err);
+  try {
+    const videoTrack = localTracksRef.current?.find((t) => t.kind === "video");
+    if (!videoTrack) return;
+
+    // use the underlying MediaStreamTrack enable/disable for stability
+    const enabled = !!videoTrack.mediaStreamTrack?.enabled;
+    if (videoTrack.mediaStreamTrack) {
+      videoTrack.mediaStreamTrack.enabled = !enabled;
+      setVideoEnabled(!enabled);
+    } else if (typeof videoTrack.enable === "function" && typeof videoTrack.disable === "function") {
+      // fallback for older Twilio track API
+      if (enabled) videoTrack.disable(); else videoTrack.enable();
+      setVideoEnabled(!enabled);
+    } else {
+      console.warn("toggleVideo: cannot toggle track (no mediaStreamTrack)");
     }
-  };
+  } catch (err) {
+    console.warn("toggleVideo err", err);
+  }
+};
+
 
   // Toggle audio: enable/disable local audio track
-  const toggleAudio = () => {
-    try {
-      const at = localTracksRef.current?.find((t) => t.kind === "audio");
-      if (!at) return;
-      if (at.mediaStreamTrack) {
-        at.mediaStreamTrack.enabled = !at.mediaStreamTrack.enabled;
-        setAudioEnabled(at.mediaStreamTrack.enabled);
-      }
-    } catch (err) {
-      console.warn("toggleAudio err", err);
+const toggleAudio = () => {
+  try {
+    const audioTrack = localTracksRef.current?.find((t) => t.kind === "audio");
+    if (!audioTrack) return;
+
+    const enabled = !!audioTrack.mediaStreamTrack?.enabled;
+    if (audioTrack.mediaStreamTrack) {
+      audioTrack.mediaStreamTrack.enabled = !enabled;
+      setAudioEnabled(!enabled);
+    } else if (typeof audioTrack.enable === "function" && typeof audioTrack.disable === "function") {
+      if (enabled) audioTrack.disable(); else audioTrack.enable();
+      setAudioEnabled(!enabled);
+    } else {
+      console.warn("toggleAudio: cannot toggle track (no mediaStreamTrack)");
     }
-  };
+  } catch (err) {
+    console.warn("toggleAudio err", err);
+  }
+};
+
 
   const handleEndCall = async () => {
     setLoading(true);
@@ -576,3 +703,4 @@ export default function TelemedicineApp() {
     </div>
   );
 }
+
