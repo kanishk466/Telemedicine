@@ -1,9 +1,8 @@
-import React from 'react'
-import TelemedicineApp from './TelemedicineApp'
+import TelemedicineSystem from './TelemedicineSystem'
 
 const App = () => {
   return (
-    <TelemedicineApp/>
+    <TelemedicineSystem/>
   )
 }
 
