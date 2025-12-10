@@ -1,6 +1,7 @@
 
 import React, { useState, useEffect, useRef } from 'react';
-import { Video, Mic, MicOff, VideoOff, Phone, User, Copy, Check } from 'lucide-react';
+import Video from "twilio-video"
+import { Video as VideoIcon, Mic, MicOff, VideoOff, Phone, User, Copy, Check } from 'lucide-react';
 
 export default function TelemedicineMeeting() {
   const [view, setView] = useState('home'); // home, create, join, waiting, call
@@ -16,6 +17,10 @@ export default function TelemedicineMeeting() {
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
   const [copied, setCopied] = useState(false);
+
+  const [roomName, setRoomName] = useState("");
+const [twilioRoom, setTwilioRoom] = useState(null);
+
   
   // Appointment form
   const [appointmentForm, setAppointmentForm] = useState({
@@ -45,25 +50,27 @@ export default function TelemedicineMeeting() {
     }
   }, []);
 
+
+const checkStatus = async () => {
+  const res = await fetch(`https://arlette-uniconoclastic-juanita.ngrok-free.app/api/appointment/${appointmentId}`);
+  const data = await res.json();
+  
+  if (data.status === "ADMITTED") {
+    setView("ready-to-join");
+  }
+};
+
+
+
+
   useEffect(() => {
-    if (inCall) initVideo();
-    return () => stopVideo();
-  }, [inCall]);
+  if (view === "waiting" && userRole === "DOCTOR") {
+    const interval = setInterval(checkStatus, 3000);
+    return () => clearInterval(interval);
+  }
+}, [view]);
 
-  const initVideo = async () => {
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
-      if (localRef.current) localRef.current.srcObject = stream;
-    } catch (e) {
-      setError('Failed to access camera/microphone');
-    }
-  };
 
-  const stopVideo = () => {
-    if (localRef.current?.srcObject) {
-      localRef.current.srcObject.getTracks().forEach(t => t.stop());
-    }
-  };
 
   const handleCreateAppointment = async () => {
     setLoading(true);
@@ -109,52 +116,39 @@ export default function TelemedicineMeeting() {
   };
 
   const handleJoinMeeting = async () => {
-    if (!meetingId || !userId) {
-      setError('Please enter Meeting ID and User ID');
-      return;
-    }
+  setLoading(true);
+  setError("");
 
-    setLoading(true);
-    setError('');
+  try {
+    const res = await fetch(joinEndpoint, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: "Bearer " + userId + "|" + userRole
+      },
+      body: JSON.stringify({ meetingId }),
+    });
 
-    try {
-      const res = await fetch(joinEndpoint, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          meetingId: meetingId.trim(),
-          userId: userId.trim(),
-          userRole: userRole
-        }),
-      });
+    const data = await res.json();
 
-      console.log(res);
-      
+    setToken(data.token.token);
+    setRoomName(data.roomName);     // <-- FIXED
+    setView("waiting");
+  } catch (err) {
+    setError(err.message);
+  } finally {
+    setLoading(false);
+  }
+};
 
-      if (!res.ok) {
-        const errorData = await res.json().catch(() => ({}));
-        throw new Error(errorData.message || 'Failed to join meeting');
-      }
 
-      
-      
 
-      const data = await res.json();
-      console.log(data);
-      setToken(data.token.token || '');
-      setRoom(data.roomName || '');
-      setView('waiting');
-    } catch (e) {
-      setError(e.message || 'Failed to join meeting');
-    } finally {
-      setLoading(false);
-    }
-  };
+const handleStartCall = async () => {
+  setView("call");
+  await connectToTwilioRoom();
+};
 
-  const handleStartCall = () => {
-    setInCall(true);
-    setView('call');
-  };
+
 
   const toggleVideo = () => {
     const track = localRef.current?.srcObject?.getVideoTracks()[0];
@@ -173,12 +167,12 @@ export default function TelemedicineMeeting() {
   };
 
   const handleEndCall = () => {
-    stopVideo();
-    setInCall(false);
-    setToken('');
-    setRoom('');
-    setView('home');
-  };
+  if (twilioRoom) {
+    twilioRoom.disconnect();
+  }
+  setView("completed");
+};
+
 
   const generateMeetingLink = (mtgId) => {
     const baseUrl = window.location.origin + window.location.pathname;
@@ -192,6 +186,114 @@ export default function TelemedicineMeeting() {
     setTimeout(() => setCopied(false), 2000);
   };
 
+
+
+
+// const connectToTwilioRoom = async () => {
+//   try {
+//     const roomConnection = await Video.connect(token, {
+//       name: room,
+//       audio: true,
+//       video: { width: 640 },
+//     });
+
+//     setRoom(roomConnection);
+//     console.log("Connected to Twilio Room:", roomConnection.sid);
+
+//     // Attach local tracks
+//     roomConnection.localParticipant.tracks.forEach(publication => {
+//       if (publication.track) {
+//         publication.track.attach(localRef.current);
+//       }
+//     });
+
+//     // Attach remote participants
+//     roomConnection.participants.forEach(participant => {
+//       participant.tracks.forEach(publication => {
+//         if (publication.isSubscribed && publication.track) {
+//           publication.track.attach(remoteRef.current);
+//         }
+//       });
+//     });
+
+//     roomConnection.on("participantConnected", participant => {
+//       console.log("Participant joined:", participant.identity);
+
+//       participant.on("trackSubscribed", track => {
+//         track.attach(remoteRef.current);
+//       });
+//     });
+
+//     roomConnection.on("participantDisconnected", participant => {
+//       console.log("Participant left:", participant.identity);
+//     });
+
+//     roomConnection.on("disconnected", () => {
+//       console.log("Room disconnected");
+//       setInCall(false);
+//       setView("completed");
+//     });
+
+//   } catch (error) {
+//     console.error("Twilio connect error:", error);
+//     setError("Unable to join meeting.");
+//   }
+// };
+
+
+
+const connectToTwilioRoom = async () => {
+  try {
+    // 1️⃣ Create local audio + video tracks
+    const localTracks = await Video.createLocalTracks({
+      video: { width: 640 },
+      audio: true
+    });
+
+    // Attach local video to UI
+    const localVideoTrack = localTracks.find((t) => t.kind === "video");
+    if (localVideoTrack) localVideoTrack.attach(localRef.current);
+
+    // 2️⃣ Connect to room
+    const roomConn = await Video.connect(token, {
+      name: roomName,
+      tracks: localTracks,
+    });
+
+    setTwilioRoom(roomConn);
+    console.log("TWILIO: Connected to room:", roomConn.sid);
+
+    // 3️⃣ Handle participants
+    const handleParticipant = (participant) => {
+      console.log("Participant connected:", participant.identity);
+
+      participant.on("trackSubscribed", (track) => {
+        track.attach(remoteRef.current);
+      });
+
+      participant.on("trackUnsubscribed", (track) => {
+        track.detach();
+      });
+    };
+
+    roomConn.participants.forEach(handleParticipant);
+    roomConn.on("participantConnected", handleParticipant);
+
+    // 4️⃣ Room disconnect event
+    roomConn.on("disconnected", () => {
+      console.log("Room disconnected");
+      localTracks.forEach((t) => t.stop());
+      setTwilioRoom(null);
+      setView("completed");
+    });
+
+  } catch (error) {
+    console.error("Twilio connect error:", error);
+    setError("Unable to join meeting.");
+  }
+};
+
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 flex items-center justify-center p-4">
       <div className="w-full max-w-6xl">
@@ -201,7 +303,7 @@ export default function TelemedicineMeeting() {
             <div className="bg-gradient-to-r from-indigo-600 to-blue-600 p-8 text-white">
               <div className="flex items-center justify-center mb-4">
                 <div className="bg-white bg-opacity-20 p-4 rounded-full">
-                  <Video size={48} />
+                  <VideoIcon size={48} />
                 </div>
               </div>
               <h1 className="text-3xl font-bold text-center">Telemedicine Platform</h1>
@@ -229,7 +331,7 @@ export default function TelemedicineMeeting() {
                   className="bg-gradient-to-br from-green-50 to-emerald-50 border-2 border-green-200 rounded-xl p-8 hover:shadow-lg transition-all text-left group"
                 >
                   <div className="bg-green-600 w-16 h-16 rounded-full flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">
-                    <Video className="text-white" size={32} />
+                    <VideoIcon className="text-white" size={32} />
                   </div>
                   <h3 className="text-2xl font-bold text-gray-900 mb-2">Join Meeting</h3>
                   <p className="text-gray-600">Enter an existing consultation</p>
@@ -438,7 +540,7 @@ export default function TelemedicineMeeting() {
               <div className="flex items-center justify-between mb-4">
                 <div className="flex items-center gap-4">
                   <div className="bg-white bg-opacity-20 p-4 rounded-full">
-                    <Video size={48} />
+                    <VideoIcon size={48} />
                   </div>
                   <div>
                     <h1 className="text-3xl font-bold">Join Meeting</h1>
@@ -674,7 +776,7 @@ export default function TelemedicineMeeting() {
                       : 'bg-red-500 hover:bg-red-600 text-white'
                   }`}
                 >
-                  {videoEnabled ? <Video size={28} /> : <VideoOff size={28} />}
+                  {videoEnabled ? <VideoIcon size={28} /> : <VideoOff size={28} />}
                 </button>
 
                 <button
