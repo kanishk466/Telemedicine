@@ -26,7 +26,7 @@ export default function TelemedicineTest() {
         "Content-Type": "application/json",
         "Authorization": `Bearer ${userId}|${role}`
       },
-      body: JSON.stringify({ meetingId })
+      body: JSON.stringify({ meetingId , userId , role })
     });
 
     const data = await res.json();
@@ -208,3 +208,4 @@ export default function TelemedicineTest() {
     </div>
   );
 }
+
